@@ -1,0 +1,170 @@
+---
+title: "SNP-LRT"
+author: "rcsilva"
+date: "11/14/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Importar as matrizes de contagem
+
+Primeiro, é necessário importar os conjuntos de dados utilizados na expressão diferencial pelo teste de Wald.
+
+```{r DataPreprocessing, eval=FALSE, message=TRUE, warning=TRUE, include=TRUE}
+## Bibliotecas para análise a nível de gene
+library("BiocParallel")
+library("tximport")
+library("DESeq2")
+library("clValid")
+library("ggplot2")
+library("xlsx")
+library("stringr")
+
+### Funções próprias
+# Negação rápida
+'%!in%' <- function(x,y)!('%in%'(x,y))
+
+# Comparação de tamanho
+'%sizecheck%' <- function(x,y)(length(x) == length(y))
+
+# Ler as amostras
+dir <- "/work/rcsilva/projects/drycane/analysis/01_29_kallisto"
+samples <- read.table("/work/rcsilva/projects/drycane/analysis/01_29_kallisto/samples2.txt", header=T)
+
+# Corte de FC no DESeq2
+parameter.lfc.sig <- 02
+parameter.deseq.padj <- 0.1
+
+# Registrar processadores
+register(MulticoreParam(30))
+
+## Lendo cada um dos arquivos de quantificação, na pasta dir
+files <- file.path(dir, "kallisto", samples$folder, "abundance.tsv")
+
+## Importar os transcritos
+txi <- tximport(files, type = "kallisto", txOut=TRUE)
+
+## Sumário para genes
+txi.gene <- summarizeToGene(txi = txi, tx2gene = read.delim(
+  file = '/work/rcsilva/projects/drycane/analysis/2019-05-08_kallisto_gene/correct_map.tsv',
+  stringsAsFactors = F))
+
+## Adicionando o par binário "estressado/não-estressado"
+samples[,7] <- NA
+counter = 1;
+
+for (stress.level in samples$severity) {
+  if (stress.level == "Moderate" | stress.level == "Severe") {
+    samples[counter,7] <- c("Yes");
+  } else {
+    samples[counter,7] <- c("No");
+  }
+  counter = counter+1
+}
+
+# Alterando o nome da coluna 07 para is.stressed
+names(samples)[7] <- c("is.stressed")
+# Tornar um fator:
+samples$is.stressed <- as.factor(samples$is.stressed)
+
+# Vinculando genótipo e tempo
+samples$genotype_time <- factor(paste0(samples$genotype, "_", samples$time))
+
+# Vinculando genótipo, tempo, e se está estressado
+samples$genotype_time_stress <- factor(paste0(samples$genotype_time, "_", samples$is.stressed))
+
+# Cabeçalho
+head(samples)
+
+# Refazer os níveis de severidade
+levels(samples$severity) <- c("Not_stressed", "Moderate", "Severe")
+```
+
+## Diferencialmente expressos: severidade
+
+
+```{r DESeq_severity}
+# Cria o objeto Txi para severidade
+deseq.object.severity <- DESeqDataSetFromTximport(
+  txi.gene,
+  colData = samples,
+  design =~ severity)
+
+# Colapsa réplicas técnicas
+deseq.object.severity <- collapseReplicates(deseq.object.severity, deseq.object.severity$sample)
+
+# Roda o teste LRT para severo
+dds <- DESeq(deseq.object.severity, test = "LRT",  reduced =~ 1, parallel = T)
+
+# Extrair o resultado independente da severidade
+res <- results(dds)
+res.padj <- subset(res, padj < 0.05)
+
+# Escreve a tabela de saída
+write.table(x = as.data.frame(res.padj),
+            file = "../analysis/2019-11-14_clust_severity/severity_DESeq2.tsv",
+            quote = F,
+            sep = '\t',
+            row.names = T)
+
+# Salvar as contagens a nível de gene
+write.table(x = as.data.frame(dds@assays$data$counts),
+            file = "../analysis/2019-11-14_clust_severity/txiGeneCounts.tsv",
+            quote = F,
+            sep = '\t',
+            row.names = T)
+
+# Separar somente os genes DE
+gene.counts.dds <- as.data.frame(dds@assays$data$counts)
+gene.counts.DE.severity <- subset(gene.counts.dds,
+                                  row.names(gene.counts.dds) %in% row.names(res.padj))
+
+# Salvar essa tabela
+write.table(x = gene.counts.DE.severity,
+            file = "../analysis/2019-11-14_clust_severity/Severity_txiGeneCounts.tsv",
+            quote = F,
+            sep = '\t',
+            row.names = T)
+```
+
+## Diferencialmente expressos com modelo reduzido
+
+Representa diferença em expressão em função do tempo. [Link para o tutorial](https://hbctraining.github.io/DGE_workshop/lessons/08_DGE_LRT.html)
+
+```{r ReducedModelDESeq2, eval=TRUE, include=TRUE}
+
+## Modelo completo e reduzido
+full_model <- ~ genotype + severity + time + severity:time
+reduced_model <- ~ genotype + treatment + time
+
+## Importando o objeto
+deseq.object.fullModel <- DESeqDataSetFromTximport(
+  txi.gene, colData = samples, 
+  design =~ genotype + severity + time + severity:time)
+
+## Rodando teste LRT para o modelo reduzido
+dds_lrt_time <- DESeq(deseq.object.fullModel, 
+                      test="LRT", 
+                      reduced = ~ genotype + severity + time,
+                      parallel = T)
+
+# 248 significativos
+res.fullModel <- results(dds_lrt_time)
+res.fullModel.padj <- subset(res.fullModel, padj < 0.05)
+
+# Separar somente os genes DE
+gene.counts.DE.fullModel <- subset(gene.counts.dds,
+                                   row.names(gene.counts.dds) %in% row.names(res.fullModel.padj))
+
+# Salvar essa tabela
+write.table(x = gene.counts.DE.fullModel,
+            file = "../analysis/2019-11-14_clust_severity/FullModel_txiGeneCounts.tsv",
+            quote = F,
+            sep = '\t',
+            row.names = T)
+
+
+```
