@@ -319,7 +319,7 @@ usearch81 \
 ## Sequências com cabeçalhos estourados (i.e. bibliotecas perdidas)
 ```
 
-### Experimental - PEAR para seqs .fudidas
+### Experimental - Merge com PEAR
 
 ```shell
 # Cria o diretório
