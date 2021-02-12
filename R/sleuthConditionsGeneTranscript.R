@@ -305,7 +305,6 @@ models(so.gene)
 ### Escolhe a condição pareada
 #### Escolher o tratamento que irá VS o base
 #### Depois, deve ser trocado pra J3, Egg, ...
-condition_two = "MI-J3"
 paired_condition = paste0("condition", condition_two)
 so.gene <- sleuth_wt(so.gene, paired_condition)
 so.results <- sleuth_results(so.gene, test=paired_condition, test_type="wald")
